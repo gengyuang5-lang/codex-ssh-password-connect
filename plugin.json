@@ -1,14 +1,14 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "codex-ssh-password",
-  "version": "1.6.4",
+  "version": "1.6.5",
   "description": "Connect Codex to SSH servers using a local password prompt or private key, prevent duplicate sessions, and show chat titles in a live monitor.",
   "extensions": {
     "com.openai": {
       "interface": {
         "displayName": "SSH Password Connect",
         "shortDescription": "Connect to SSH servers without exposing the password to chat.",
-        "longDescription": "A local MCP server with password prompts and private-key authentication using a remembered key file on this PC. Normal connects never open a key picker when a usable default exists; a separate key-setting tool handles explicit changes. It stores only the key path, never key contents or passphrases. It resolves Codex chat titles from MCP thread metadata and the local title database, reuses matching connections, and supports bounded reads, streamed text patches, and staged large text-file uploads over SFTP without a local project mirror. Remote commands and writes use the MCP client's approval flow.",
+        "longDescription": "Local Windows MCP bridge for password or saved-key SSH. Low-token defaults return small file, command, and directory outputs; increase limits only as needed. Credentials stay local. Matching chat connections are reused; remote writes use Codex approvals.",
         "developerName": "Local"
       }
     }

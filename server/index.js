@@ -19,9 +19,14 @@ const pendingConnections = new Map();
 const connectionAttempts = new Map();
 const uploads = new Map();
 const maxOutputBytes = 48 * 1024;
+const defaultOutputBytes = 8 * 1024;
 const maxCommandLength = 2500;
 const maxFileBytes = 256 * 1024;
-const maxRangeBytes = 32 * 1024;
+const defaultReadBytes = 8 * 1024;
+const maxRangeBytes = 16 * 1024;
+const defaultRangeBytes = 8 * 1024;
+const defaultDirectoryEntries = 50;
+const maxDirectoryEntries = 500;
 const maxUploadChunkBytes = 32 * 1024;
 const maxPatchTextBytes = 16 * 1024;
 const commandTimeoutMs = 120_000;
@@ -422,7 +427,7 @@ async function connectWithPrivateKey(host, username, port) {
   throw new Error('Private-key authentication could not be established.');
 }
 
-function executeRemoteCommand(client, command) {
+function executeRemoteCommand(client, command, outputLimitBytes = maxOutputBytes) {
   return new Promise((resolve, reject) => {
     client.exec(command, (error, stream) => {
       if (error) {
@@ -439,7 +444,7 @@ function executeRemoteCommand(client, command) {
 
       const collect = (target, currentSize, chunk) => {
         const bytes = Buffer.from(chunk);
-        const room = Math.max(0, maxOutputBytes - currentSize);
+        const room = Math.max(0, outputLimitBytes - currentSize);
         if (room > 0) target.push(bytes.subarray(0, room));
         if (bytes.length > room) truncated = true;
         return currentSize + Math.min(room, bytes.length);
@@ -598,38 +603,6 @@ function validateRemotePath(remotePath) {
     throw new Error('path must be a non-empty remote path without NUL or line breaks.');
   }
   return remotePath;
-}
-
-function readUtf8File(sftp, remotePath, maxBytes) {
-  return new Promise((resolve, reject) => {
-    const chunks = [];
-    let totalBytes = 0;
-    let oversized = false;
-    const stream = sftp.createReadStream(remotePath);
-    stream.on('data', (chunk) => {
-      totalBytes += chunk.length;
-      if (totalBytes > maxBytes) {
-        oversized = true;
-        stream.destroy(new Error('file size limit exceeded'));
-        return;
-      }
-      chunks.push(chunk);
-    });
-    stream.once('error', (error) => {
-      reject(oversized ? new Error(`File exceeds the ${maxBytes}-byte read limit.`) : error);
-    });
-    stream.once('end', () => {
-      if (oversized) {
-        reject(new Error(`File exceeds the ${maxBytes}-byte read limit.`));
-        return;
-      }
-      try {
-        resolve(new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks)));
-      } catch {
-        reject(new Error('File is not valid UTF-8 text; use a remote command to inspect binary files.'));
-      }
-    });
-  });
 }
 
 function readUtf8Range(sftp, remotePath, offset, maxBytes, fileSize) {
@@ -819,20 +792,20 @@ async function hashAndValidateUtf8(sftp, remotePath) {
 
 const server = new McpServer({
   name: 'codex-ssh-password',
-  version: '1.6.4',
-  instructions: 'This MCP server runs on the Windows client. Choose password or local private-key authentication; private-key connects use the saved default path without opening the picker. Only use ssh_set_default_private_key when the user explicitly asks to choose or change the default key. Passwords, private-key files, and passphrases never belong in tool arguments. Verify the host fingerprint on first use. The monitor resolves Codex chat titles from MCP metadata and local history. Repeated connect calls to the same target in one chat reuse the active session; use forceNew only for an intentional separate connection. After a successful connection, open or activate the single-instance monitor. Use bounded SFTP ranges, streamed patches, and staged chunk uploads for large UTF-8 text; no local project mirror is created. Remote commands and writes require the MCP client approval prompt.',
+  version: '1.6.5',
+  instructions: 'Runs locally on Windows. For key auth, use the saved local key; call ssh_set_default_private_key only on explicit key changes. Never request credentials in chat. Confirm the host fingerprint. Reads default to small outputs; use offsets or raise limits only when needed. Remote commands and writes require Codex approval. Reuse matching chat sessions; forceNew is for intentional separate sessions.',
 });
 
 server.registerTool('ssh_connect', {
   title: 'Connect to an SSH server',
-  description: 'Connect to the specified SSH server using a password or the saved private key stored on this PC. Private-key contents and passphrases stay local. When private-key authentication is selected, the saved local key file is used without opening the picker; the picker opens only when no usable default key exists. Repeated calls in the same MCP chat reuse an active matching session; set forceNew=true only to intentionally create another session.',
+  description: 'Connect by local password or saved private key. Verify the first-use host fingerprint. Matching calls in one chat reuse the session; use forceNew only for a separate session.',
   inputSchema: {
-    host: z.string().min(1).max(253).describe('Server hostname or IP address.'),
-    username: z.string().min(1).max(256).describe('SSH account name to prefill in the Windows credential dialog.'),
-    port: z.number().int().min(1).max(65535).default(22).describe('SSH port, usually 22.'),
-    authMethod: z.enum(['password', 'privateKey']).default('password').describe('Use a local password prompt or the saved private-key file on this PC. The server must have the matching public key in authorized_keys.'),
-    forceNew: z.boolean().default(false).describe('Create a separate SSH session instead of reusing an active matching session. Set true to switch key identity or explicitly reauthenticate.'),
-    chatLabel: z.string().max(128).optional().describe('Current Codex chat title, or a concise non-sensitive task label when the actual title is unavailable. The monitor shows up to 64 characters.'),
+    host: z.string().min(1).max(253).describe('Server hostname or IP.'),
+    username: z.string().min(1).max(256).describe('SSH account.'),
+    port: z.number().int().min(1).max(65535).default(22).describe('SSH port.'),
+    authMethod: z.enum(['password', 'privateKey']).default('password').describe('Password prompt or saved local private key; server needs its matching public key.'),
+    forceNew: z.boolean().default(false).describe('Open a separate session instead of reusing one.'),
+    chatLabel: z.string().max(128).optional().describe('Optional concise chat title for the monitor.'),
   },
   annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
 }, async ({ host: rawHost, username, port, authMethod, forceNew, chatLabel: rawChatLabel }, extra) => {
@@ -879,7 +852,7 @@ server.registerTool('ssh_connect', {
 
 server.registerTool('ssh_set_default_private_key', {
   title: 'Set the default local SSH private key',
-  description: 'Open the Windows file picker and save a new default private-key file path on this PC. Use this separate tool only when the user explicitly asks to select or change the default key. Normal ssh_connect calls never open the picker when a usable default path exists. The file contents and passphrase are not stored.',
+  description: 'Choose or change the local default private-key path. Use only on explicit request; key contents and passphrase are not saved.',
   inputSchema: {},
   annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
 }, async () => {
@@ -892,13 +865,14 @@ server.registerTool('ssh_set_default_private_key', {
 
 server.registerTool('ssh_run', {
   title: 'Run an SSH command',
-  description: 'Run one shell command on an active SSH connection. Commands can change or delete server data; the MCP client should require approval for this tool.',
+  description: 'Run a remote shell command; output defaults to 8 KiB per stream.',
   inputSchema: {
-    connectionId: z.string().uuid().describe('Connection ID returned by ssh_connect.'),
-    command: z.string().min(1).max(maxCommandLength).describe('One remote shell command. Keep it under 2500 characters.'),
+    connectionId: z.string().uuid().describe('Active connection ID.'),
+    command: z.string().min(1).max(maxCommandLength).describe('Remote command.'),
+    maxOutputBytes: z.number().int().min(1024).max(maxOutputBytes).default(defaultOutputBytes).describe('Bytes per output stream; default 8 KiB, max 48 KiB.'),
   },
   annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
-}, async ({ connectionId, command }) => {
+}, async ({ connectionId, command, maxOutputBytes: outputLimitBytes }) => {
   const session = sessions.get(connectionId);
   if (!session) throw new Error('No active connection exists for that ID. Connect again and use its new connection ID.');
   if (!command.trim()) throw new Error('command must not be empty.');
@@ -909,7 +883,7 @@ server.registerTool('ssh_run', {
   publishStatus();
   let result;
   try {
-    result = await executeRemoteCommand(session.client, command);
+    result = await executeRemoteCommand(session.client, command, outputLimitBytes);
   } finally {
     if (sessions.get(connectionId) === session) {
       session.state = 'connected';
@@ -923,23 +897,26 @@ server.registerTool('ssh_run', {
   ];
   if (result.stdout) parts.push(`STDOUT:\n${result.stdout}`);
   if (result.stderr) parts.push(`STDERR:\n${result.stderr}`);
-  if (result.truncated) parts.push('Output was truncated at 48 KiB per stream.');
+  if (result.truncated) parts.push(`Output was truncated at ${outputLimitBytes / 1024} KiB per stream.`);
   return { content: [{ type: 'text', text: parts.join('\n\n') }] };
 });
 
 server.registerTool('ssh_list_directory', {
   title: 'List a remote project directory',
-  description: 'List filenames and basic metadata in a remote directory over SFTP. The SSH connection and file access stay on this local computer.',
+  description: 'List one compact directory page; use nextOffset to continue.',
   inputSchema: {
-    connectionId: z.string().uuid().describe('Connection ID returned by ssh_connect.'),
-    path: z.string().min(1).max(4096).describe('Remote directory path, for example /home/alice/project.'),
+    connectionId: z.string().uuid().describe('Active connection ID.'),
+    path: z.string().min(1).max(4096).describe('Remote directory path.'),
+    offset: z.number().int().min(0).default(0).describe('Starting entry index.'),
+    limit: z.number().int().min(1).max(maxDirectoryEntries).default(defaultDirectoryEntries).describe('Page size; default 50, max 500.'),
   },
   annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
-}, async ({ connectionId, path: rawPath }) => {
+}, async ({ connectionId, path: rawPath, offset, limit }) => {
   const session = getSession(connectionId);
   const remotePath = validateRemotePath(rawPath);
   const entries = await withSftp(session, (sftp) => sftpCall(sftp, 'readdir', remotePath), 'List directory');
-  const items = entries.slice(0, 1000).map((entry) => {
+  const page = entries.slice(offset, offset + limit);
+  const items = page.map((entry) => {
     const mode = (entry.attrs.mode ?? 0) & 0o170000;
     const type = mode === 0o040000 ? 'directory' : mode === 0o120000 ? 'symlink' : 'file';
     return {
@@ -949,34 +926,37 @@ server.registerTool('ssh_list_directory', {
       modified: entry.attrs.mtime ? new Date(entry.attrs.mtime * 1000).toISOString() : null,
     };
   });
-  return { content: [{ type: 'text', text: JSON.stringify({ path: remotePath, entries: items, truncated: entries.length > items.length }, null, 2) }] };
+  const nextOffset = offset + items.length < entries.length ? offset + items.length : null;
+  return { content: [{ type: 'text', text: JSON.stringify({ path: remotePath, entries: items, nextOffset }, null, 2) }] };
 });
 
 server.registerTool('ssh_read_file', {
   title: 'Read a remote project file',
-  description: 'Read a UTF-8 text file over SFTP from the remote project. This one-shot tool is limited to 256 KiB; use ssh_read_file_range for larger files.',
+  description: 'Read a UTF-8 preview; defaults to 8 KiB. Use ranges for the rest.',
   inputSchema: {
-    connectionId: z.string().uuid().describe('Connection ID returned by ssh_connect.'),
-    path: z.string().min(1).max(4096).describe('Remote file path.'),
+    connectionId: z.string().uuid().describe('Active connection ID.'),
+    path: z.string().min(1).max(4096).describe('Remote path.'),
+    maxBytes: z.number().int().min(1).max(maxFileBytes).default(defaultReadBytes).describe('Bytes to return; default 8 KiB, max 256 KiB.'),
   },
   annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
-}, async ({ connectionId, path: rawPath }) => {
+}, async ({ connectionId, path: rawPath, maxBytes }) => {
   const session = getSession(connectionId);
   const remotePath = validateRemotePath(rawPath);
-  const content = await withSftp(session, async (sftp) => {
+  const result = await withSftp(session, async (sftp) => {
     const attrs = await sftpCall(sftp, 'stat', remotePath);
-    if (attrs.size > maxFileBytes) throw new Error(`File is ${attrs.size} bytes; the read limit is ${maxFileBytes} bytes.`);
-    return readUtf8File(sftp, remotePath, maxFileBytes);
+    if (!isRegularFile(attrs)) throw new Error('Only regular UTF-8 text files can be read.');
+    return { size: attrs.size, ...await readUtf8Range(sftp, remotePath, 0, maxBytes, attrs.size) };
   }, 'Read file');
-  return { content: [{ type: 'text', text: content }] };
+  const { content, ...meta } = result;
+  return { content: [{ type: 'text', text: `${JSON.stringify({ path: remotePath, ...meta })}\n${content}` }] };
 });
 
 server.registerTool('ssh_get_file_info', {
   title: 'Get remote file information',
-  description: 'Read metadata for a remote file without downloading its contents. Useful before reading a large file in ranges.',
+  description: 'Get remote file type, size and modification time without reading content.',
   inputSchema: {
-    connectionId: z.string().uuid().describe('Connection ID returned by ssh_connect.'),
-    path: z.string().min(1).max(4096).describe('Remote file path.'),
+    connectionId: z.string().uuid().describe('Active connection ID.'),
+    path: z.string().min(1).max(4096).describe('Remote path.'),
   },
   annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
 }, async ({ connectionId, path: rawPath }) => {
@@ -992,12 +972,12 @@ server.registerTool('ssh_get_file_info', {
 
 server.registerTool('ssh_read_file_range', {
   title: 'Read a range from a remote text file',
-  description: 'Read a bounded UTF-8 byte range from a remote text file, including files larger than 256 KiB. Repeat with nextOffset to continue. The range is adjusted to UTF-8 character boundaries.',
+  description: 'Read a small UTF-8 range; continue with nextOffset.',
   inputSchema: {
-    connectionId: z.string().uuid().describe('Connection ID returned by ssh_connect.'),
-    path: z.string().min(1).max(4096).describe('Remote file path.'),
-    offset: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).default(0).describe('Starting byte offset. Use nextOffset from the previous result to continue.'),
-    maxBytes: z.number().int().min(1).max(maxRangeBytes).default(maxRangeBytes).describe('Maximum bytes to return in this call (up to 32 KiB).'),
+    connectionId: z.string().uuid().describe('Active connection ID.'),
+    path: z.string().min(1).max(4096).describe('Remote path.'),
+    offset: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).default(0).describe('Byte offset.'),
+    maxBytes: z.number().int().min(1).max(maxRangeBytes).default(defaultRangeBytes).describe('Bytes to return; default 8 KiB, max 16 KiB.'),
   },
   annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
 }, async ({ connectionId, path: rawPath, offset, maxBytes }) => {
@@ -1014,13 +994,13 @@ server.registerTool('ssh_read_file_range', {
 
 server.registerTool('ssh_patch_file', {
   title: 'Apply a text patch to a remote file',
-  description: 'Replace an exact UTF-8 text fragment in a remote file while streaming it through memory in bounded chunks. The full file is never downloaded to local storage. The target is replaced atomically after the expected match count and file stability checks pass.',
+  description: 'Patch an exact UTF-8 fragment in place; streams the file and atomically replaces it after validation.',
   inputSchema: {
-    connectionId: z.string().uuid().describe('Connection ID returned by ssh_connect.'),
-    path: z.string().min(1).max(4096).describe('Remote file path to update.'),
-    oldText: z.string().min(1).max(maxPatchTextBytes).describe('Exact existing UTF-8 text to replace; maximum 16 KiB.'),
-    newText: z.string().max(maxPatchTextBytes).describe('Replacement UTF-8 text; maximum 16 KiB.'),
-    expectedOccurrences: z.number().int().min(1).max(1000000).default(1).describe('Number of exact matches required before the atomic replacement is committed.'),
+    connectionId: z.string().uuid().describe('Active connection ID.'),
+    path: z.string().min(1).max(4096).describe('Remote path.'),
+    oldText: z.string().min(1).max(maxPatchTextBytes).describe('Exact text to replace; max 16 KiB.'),
+    newText: z.string().max(maxPatchTextBytes).describe('Replacement text; max 16 KiB.'),
+    expectedOccurrences: z.number().int().min(1).max(1000000).default(1).describe('Required exact match count.'),
   },
   annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
 }, async ({ connectionId, path: rawPath, oldText, newText, expectedOccurrences }) => {
@@ -1062,11 +1042,11 @@ server.registerTool('ssh_patch_file', {
 
 server.registerTool('ssh_write_file', {
   title: 'Write a remote project file',
-  description: 'Create or replace a UTF-8 text file over SFTP in one operation, up to 256 KiB. Use ssh_patch_file to edit a larger existing file or the staged upload tools for a larger new file.',
+  description: 'Create or replace a UTF-8 text file up to 256 KiB.',
   inputSchema: {
-    connectionId: z.string().uuid().describe('Connection ID returned by ssh_connect.'),
-    path: z.string().min(1).max(4096).describe('Remote file path to create or replace.'),
-    content: z.string().max(maxFileBytes).describe('Complete UTF-8 text content to write; maximum 256 KiB.'),
+    connectionId: z.string().uuid().describe('Active connection ID.'),
+    path: z.string().min(1).max(4096).describe('Remote path.'),
+    content: z.string().max(maxFileBytes).describe('UTF-8 content; max 256 KiB.'),
   },
   annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
 }, async ({ connectionId, path: rawPath, content }) => {
@@ -1082,12 +1062,12 @@ server.registerTool('ssh_write_file', {
 
 server.registerTool('ssh_upload_begin', {
   title: 'Begin a large remote text-file upload',
-  description: 'Create a hidden temporary file beside the destination. Upload bounded UTF-8 chunks, then commit to atomically replace the destination. The destination is unchanged until commit.',
+  description: 'Stage a large UTF-8 upload; the destination is unchanged until commit.',
   inputSchema: {
-    connectionId: z.string().uuid().describe('Connection ID returned by ssh_connect.'),
+    connectionId: z.string().uuid().describe('Active connection ID.'),
     path: z.string().min(1).max(4096).describe('Remote destination path.'),
-    totalBytes: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional().describe('Optional total UTF-8 byte size. Omit it if you do not know the final size.'),
-    expectedSha256: z.string().regex(/^[a-f0-9]{64}$/iu).optional().describe('Optional SHA-256 of the complete UTF-8 file.'),
+    totalBytes: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional().describe('Optional total bytes.'),
+    expectedSha256: z.string().regex(/^[a-f0-9]{64}$/iu).optional().describe('Optional SHA-256.'),
   },
   annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
 }, async ({ connectionId, path: rawPath, totalBytes, expectedSha256 }) => {
@@ -1118,12 +1098,12 @@ server.registerTool('ssh_upload_begin', {
 
 server.registerTool('ssh_upload_chunk', {
   title: 'Write a chunk to a large remote text-file upload',
-  description: 'Write one UTF-8 text chunk into the temporary upload. Use the exact nextOffset returned by ssh_upload_begin or the previous chunk result. The destination is not changed until commit.',
+  description: 'Write one UTF-8 upload chunk at the exact nextOffset.',
   inputSchema: {
-    connectionId: z.string().uuid().describe('Connection ID returned by ssh_connect.'),
-    uploadId: z.string().uuid().describe('Upload ID returned by ssh_upload_begin.'),
-    offset: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).describe('Byte offset; must equal the upload nextOffset.'),
-    content: z.string().min(1).max(8192).describe('UTF-8 text chunk, at most 32 KiB after encoding.'),
+    connectionId: z.string().uuid().describe('Active connection ID.'),
+    uploadId: z.string().uuid().describe('Upload ID.'),
+    offset: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).describe('Next byte offset.'),
+    content: z.string().min(1).max(8192).describe('UTF-8 chunk; max 32 KiB encoded.'),
   },
   annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
 }, async ({ connectionId, uploadId, offset, content }) => {
@@ -1148,10 +1128,10 @@ server.registerTool('ssh_upload_chunk', {
 
 server.registerTool('ssh_upload_status', {
   title: 'Get large-file upload progress',
-  description: 'Read in-memory progress for an unfinished upload so a lost chunk response can be recovered without changing the remote file.',
+  description: 'Check an unfinished upload offset and remaining byte count.',
   inputSchema: {
-    connectionId: z.string().uuid().describe('Connection ID returned by ssh_connect.'),
-    uploadId: z.string().uuid().describe('Upload ID returned by ssh_upload_begin.'),
+    connectionId: z.string().uuid().describe('Active connection ID.'),
+    uploadId: z.string().uuid().describe('Upload ID.'),
   },
   annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
 }, async ({ connectionId, uploadId }) => {
@@ -1163,10 +1143,10 @@ server.registerTool('ssh_upload_status', {
 
 server.registerTool('ssh_upload_commit', {
   title: 'Commit a large remote text-file upload',
-  description: 'Verify the complete staged UTF-8 file and optional SHA-256, ensure the destination has not changed since upload began, then atomically replace it. This is the only large-upload step that changes the destination.',
+  description: 'Validate and atomically replace the destination with the staged upload.',
   inputSchema: {
-    connectionId: z.string().uuid().describe('Connection ID returned by ssh_connect.'),
-    uploadId: z.string().uuid().describe('Upload ID returned by ssh_upload_begin.'),
+    connectionId: z.string().uuid().describe('Active connection ID.'),
+    uploadId: z.string().uuid().describe('Upload ID.'),
   },
   annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
 }, async ({ connectionId, uploadId }) => {
@@ -1213,10 +1193,10 @@ server.registerTool('ssh_upload_commit', {
 
 server.registerTool('ssh_upload_abort', {
   title: 'Abort a large remote text-file upload',
-  description: 'Delete an unfinished hidden temporary upload without changing the destination file.',
+  description: 'Discard an unfinished upload; destination stays unchanged.',
   inputSchema: {
-    connectionId: z.string().uuid().describe('Connection ID returned by ssh_connect.'),
-    uploadId: z.string().uuid().describe('Upload ID returned by ssh_upload_begin.'),
+    connectionId: z.string().uuid().describe('Active connection ID.'),
+    uploadId: z.string().uuid().describe('Upload ID.'),
   },
   annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
 }, async ({ connectionId, uploadId }) => {
@@ -1235,9 +1215,9 @@ server.registerTool('ssh_upload_abort', {
 
 server.registerTool('ssh_disconnect', {
   title: 'Disconnect from an SSH server',
-  description: 'Close an active SSH connection and clear it from this local MCP process.',
+  description: 'Close an SSH connection.',
   inputSchema: {
-    connectionId: z.string().uuid().describe('Connection ID returned by ssh_connect.'),
+    connectionId: z.string().uuid().describe('Active connection ID.'),
   },
   annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
 }, async ({ connectionId }) => {

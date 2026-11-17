@@ -1,6 +1,6 @@
 {
   "name": "codex-ssh-password",
-  "version": "1.6.4",
+  "version": "1.6.5",
   "private": true,
   "type": "module",
   "description": "Local MCP server for password or private-key SSH from Codex.",

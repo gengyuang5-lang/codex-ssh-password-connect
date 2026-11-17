@@ -21,7 +21,7 @@
 
 需要 Windows、Node.js 22.5 或更新版本（内置 SQLite 用于读取聊天标题），以及 Codex 桌面版/本地 Codex 客户端。
 
-1. 下载[CodexSSHPasswordConnect-1.6.4-win-x64.zip](https://github.com/gengyuang5-lang/codex-ssh-password-connect/releases/download/v1.6.4/CodexSSHPasswordConnect-1.6.4-win-x64.zip)，解压到一个长期保留的本机目录；不要从临时下载目录运行。
+1. 下载[CodexSSHPasswordConnect-1.6.5-win-x64.zip](https://github.com/gengyuang5-lang/codex-ssh-password-connect/releases/download/v1.6.5/CodexSSHPasswordConnect-1.6.5-win-x64.zip)，解压到一个长期保留的本机目录；不要从临时下载目录运行。
 2. 双击 `install.cmd`，或在 PowerShell 中运行 `install.ps1`。脚本会更新本机插件、回填旧连接标题、启用插件，并移除旧的重复 MCP 入口，避免一个聊天同时加载两套 SSH 工具。
 3. 完全退出并重新打开 Codex 和 VS Code，使新版本加载。已经运行的旧 MCP 进程会继续使用旧代码，退出应用后才会结束。
 4. SSH 成功连接后会自动启动或唤醒唯一的 `CodexSSHMonitor.exe` 窗口；也可手动打开它查看 MCP 进程、待连接状态和 SSH 连接状态。监控窗口不保存或显示密码。
@@ -40,10 +40,12 @@
 
 ## 大文件处理
 
+为减少 token，文件预览和分段读取默认每次返回 8 KiB，命令输出默认每个流 8 KiB，目录列表默认 50 项。确实需要更多内容时，再提高 `maxBytes`、`maxOutputBytes` 或目录 `limit`；分段读取使用 `nextOffset` 继续。
+
 256 KiB 是 `ssh_read_file` 和 `ssh_write_file` 这两个单次工具的载荷上限，不是远程文件的大小上限。处理更大的 UTF-8 代码或文本时，Codex 可按下面方式工作：
 
 - `ssh_get_file_info` 查看文件大小和类型。
-- `ssh_read_file_range` 每次读取最多 32 KiB，按返回的 `nextOffset` 继续；读取内容留在工具结果里，不保存完整本地副本。
+- `ssh_read_file_range` 每次最多读取 16 KiB（默认 8 KiB），按返回的 `nextOffset` 继续；读取内容留在工具结果里，不保存完整本地副本。
 - `ssh_patch_file` 提供不超过 16 KiB 的原文和替换文本，由本机 MCP 通过 SFTP 流式处理整份远程文件，再在服务器同目录用临时文件原子替换。默认要求恰好匹配一次；文件在处理期间被改动或匹配数不符时会中止并保留原件。
 - 创建较大的 UTF-8 文件时，使用 `ssh_upload_begin`、多次 `ssh_upload_chunk`、`ssh_upload_status` 和 `ssh_upload_commit`。可选填总字节数；每块最多 32 KiB，最终提交前会验证 UTF-8 和可选 SHA-256；`ssh_upload_abort` 可清理未完成的临时文件。每条 SSH 连接最多同时进行 4 个上传。
 

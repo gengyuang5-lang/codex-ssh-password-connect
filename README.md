@@ -22,7 +22,7 @@
 
 Requirements: Windows, Node.js 22.5 or later, and Codex or the Codex extension for VS Code.
 
-1. Download [CodexSSHPasswordConnect-1.6.4-win-x64.zip](https://github.com/gengyuang5-lang/codex-ssh-password-connect/releases/download/v1.6.4/CodexSSHPasswordConnect-1.6.4-win-x64.zip) and extract it to a permanent folder.
+1. Download [CodexSSHPasswordConnect-1.6.5-win-x64.zip](https://github.com/gengyuang5-lang/codex-ssh-password-connect/releases/download/v1.6.5/CodexSSHPasswordConnect-1.6.5-win-x64.zip) and extract it to a permanent folder.
 2. Run `install.cmd`, or run `install.ps1` from PowerShell. It updates the local plugin, backfills old chat titles, enables the plugin, and removes the duplicate legacy MCP registration.
 3. Fully restart Codex and VS Code so they load the updated plugin. Already-running MCP processes keep their current code until the app exits.
 4. Start `CodexSSHMonitor.exe` manually if needed. It also opens automatically after an SSH connection succeeds.
@@ -41,9 +41,13 @@ With password auth, enter the password in the Windows credential dialog. To use 
 
 The monitor displays the Codex chat title next to the SSH connection. The plugin resolves Codex thread metadata against the local title database. If the client omits thread metadata, it retries a local SSH-history match a few seconds after connecting. Other MCP clients can pass a concise `chatLabel` if supported. Repeated calls to the same target in one chat reuse the active session; use `forceNew: true` only when you intentionally want a separate connection.
 
+## Token-efficient defaults
+
+To keep tool results compact, file previews and ranges default to 8 KiB, command output defaults to 8 KiB per stream, and directory listings default to 50 entries. Request a larger `maxBytes`, `maxOutputBytes`, or directory `limit` only when the task needs it; use `nextOffset` to continue reading.
+
 ## Large files
 
-The 256 KiB limit applies only to the one-call `ssh_read_file` and `ssh_write_file` tools. Larger UTF-8 text files can be read in ranges of up to 32 KiB and patched as a streamed remote file. New large text files are uploaded in chunks of up to 32 KiB, checked for UTF-8 and optional SHA-256, and committed through a server-side temporary file.
+`ssh_read_file` defaults to an 8 KiB preview and can return up to 256 KiB when requested. Larger UTF-8 text files can be read in ranges of up to 16 KiB and patched as a streamed remote file. New large text files are uploaded in chunks of up to 32 KiB, checked for UTF-8 and optional SHA-256, and committed through a server-side temporary file.
 
 Each patch fragment is limited to 16 KiB. Uploading or patching a large existing file requires temporary free space on the server. The special range, patch, and upload tools support UTF-8 text, not binary files.
 

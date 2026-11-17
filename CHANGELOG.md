@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.6.5
+
+- Reduce default SSH tool output sizes: file reads/ranges to 8 KiB, command streams to 8 KiB, and directory listings to 50 entries.
+- Add pagination and per-call output limits so larger results are requested intentionally.
+- Shorten the always-loaded SSH skill and tool descriptions to reduce fixed prompt overhead.
+
 ## 1.6.4
 
 - Remove key reselection from the normal SSH connect arguments so the saved key cannot be bypassed by an accidental flag.
