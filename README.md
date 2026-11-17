@@ -22,7 +22,7 @@
 
 Requirements: Windows, Node.js 22.5 or later, and Codex or the Codex extension for VS Code.
 
-1. Download `CodexSSHPasswordConnect-1.6.4-win-x64.zip` from the release assets and extract it to a permanent folder.
+1. Download [CodexSSHPasswordConnect-1.6.4-win-x64.zip](https://github.com/gengyuang5-lang/codex-ssh-password-connect/releases/download/v1.6.4/CodexSSHPasswordConnect-1.6.4-win-x64.zip) and extract it to a permanent folder.
 2. Run `install.cmd`, or run `install.ps1` from PowerShell. It updates the local plugin, backfills old chat titles, enables the plugin, and removes the duplicate legacy MCP registration.
 3. Fully restart Codex and VS Code so they load the updated plugin. Already-running MCP processes keep their current code until the app exits.
 4. Start `CodexSSHMonitor.exe` manually if needed. It also opens automatically after an SSH connection succeeds.

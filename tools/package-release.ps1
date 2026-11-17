@@ -41,7 +41,8 @@ if ($LASTEXITCODE -ne 0) { throw 'Could not build docs\demo.mp4.' }
 
 $archiveName = "CodexSSHPasswordConnect-$version-win-x64.zip"
 $archivePath = Join-Path $OutputDirectory $archiveName
-Compress-Archive -Path (Join-Path $sourceRoot '*') -DestinationPath $archivePath -Force
+$archiveInputs = @(Get-ChildItem -LiteralPath $sourceRoot -Force | Where-Object { $_.Name -ne '.git' } | ForEach-Object { $_.FullName })
+Compress-Archive -Path $archiveInputs -DestinationPath $archivePath -Force
 $hash = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
 $checksumPath = "$archivePath.sha256"
 [System.IO.File]::WriteAllText($checksumPath, "$hash  $archiveName`n", [System.Text.UTF8Encoding]::new($false))

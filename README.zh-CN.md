@@ -21,7 +21,7 @@
 
 需要 Windows、Node.js 22.5 或更新版本（内置 SQLite 用于读取聊天标题），以及 Codex 桌面版/本地 Codex 客户端。
 
-1. 下载 `CodexSSHPasswordConnect-1.6.4-win-x64.zip`，解压到一个长期保留的本机目录；不要从临时下载目录运行。
+1. 下载[CodexSSHPasswordConnect-1.6.4-win-x64.zip](https://github.com/gengyuang5-lang/codex-ssh-password-connect/releases/download/v1.6.4/CodexSSHPasswordConnect-1.6.4-win-x64.zip)，解压到一个长期保留的本机目录；不要从临时下载目录运行。
 2. 双击 `install.cmd`，或在 PowerShell 中运行 `install.ps1`。脚本会更新本机插件、回填旧连接标题、启用插件，并移除旧的重复 MCP 入口，避免一个聊天同时加载两套 SSH 工具。
 3. 完全退出并重新打开 Codex 和 VS Code，使新版本加载。已经运行的旧 MCP 进程会继续使用旧代码，退出应用后才会结束。
 4. SSH 成功连接后会自动启动或唤醒唯一的 `CodexSSHMonitor.exe` 窗口；也可手动打开它查看 MCP 进程、待连接状态和 SSH 连接状态。监控窗口不保存或显示密码。
